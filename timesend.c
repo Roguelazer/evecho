@@ -25,9 +25,10 @@
 
 #define BUFFER_SIZE 1024
 
-struct timespec start, end, write_end, delta;
+struct timespec read_start, start, end, write_end, getaddr_start, getaddr_end, connect_start, connect_end, delta;
 struct event* remote_event;
 ssize_t total_read_bytes;
+bool read_started = false;
 
 static void timespec_subtract(struct timespec* restrict res, struct timespec* lhs, struct timespec* rhs)
 {
@@ -60,13 +61,18 @@ int do_connect(const char* restrict host, const char* restrict svc)
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = 0;
 
+    clock_gettime(CLOCK_MONOTONIC, &getaddr_start);
     if (getaddrinfo(host, svc, &hints, &result) != 0)
         return -1;
+    clock_gettime(CLOCK_MONOTONIC, &getaddr_end);
     for (rp = result; rp != NULL; rp = rp->ai_next) {
+        clock_gettime(CLOCK_MONOTONIC, &connect_start);
         if ((sfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol)) < 0)
             return -1;
-        if (connect(sfd, rp->ai_addr, rp->ai_addrlen) != -1)
+        if (connect(sfd, rp->ai_addr, rp->ai_addrlen) != -1) {
+            clock_gettime(CLOCK_MONOTONIC, &connect_end);
             break;
+        }
         close(sfd);
     }
     if (rp == NULL) {
@@ -95,6 +101,10 @@ void on_activity(int s, short ev_type, void* data)
 {
     struct data_status* ds = (struct data_status*)data;
     if (ev_type & EV_READ) {
+        if (!read_started) {
+            read_started = true;
+            clock_gettime(CLOCK_MONOTONIC, &read_start);
+        }
         char buf[BUFFER_SIZE];
         ssize_t bytes_read;
         while (true) {
@@ -182,18 +192,26 @@ int main(int argc, char** argv) {
     data_status->data_size = data_size;
 
     base = event_init();
-    clock_gettime(CLOCK_MONOTONIC, &start);
     if ((sock = do_connect(address, service)) < 0) {
         perror("connect");
         return 1;
     }
+    clock_gettime(CLOCK_MONOTONIC, &start);
     event_set(remote_event, sock, EV_WRITE|EV_READ|EV_PERSIST, &on_activity, data_status);
     event_add(remote_event, NULL);
 
     event_dispatch();
 
     timespec_subtract(&delta, &end, &start);
-    printf("Connection active %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
+    printf("Total time:     %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
+    timespec_subtract(&delta, &getaddr_end, &getaddr_start);
+    printf("  Host lookup:  %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
+    timespec_subtract(&delta, &connect_end, &connect_start);
+    printf("  Connect:      %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
+    timespec_subtract(&delta, &write_end, &start);
+    printf("  Writing:      %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
+    timespec_subtract(&delta, &end, &read_start);
+    printf("  Reading:      %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
     printf("Sent %zd bytes, recieved %zd bytes\n", data_status->bytes_written, total_read_bytes);
 
     free(address);
