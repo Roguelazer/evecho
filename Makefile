@@ -24,6 +24,6 @@ dep:
 	sh ./automake.sh
 
 #### AUTO ####
-connection.o: connection.c connection.h
+connection.o: connection.c connection.h debugs.h
 evecho.o: evecho.c debugs.h connection.h
 #### END AUTO ####
