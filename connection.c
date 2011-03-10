@@ -17,8 +17,12 @@
 
 void connection_write(struct bufferevent* e, void* data)
 {
+#if DEBUG
     struct connection* c = (struct connection*)data;
     Dprintf("Write on fd %d\n", c->c_fd);
+#else
+    (void) data;
+#endif
     bufferevent_disable(e, EV_WRITE);
 }
 
@@ -46,9 +50,13 @@ void connection_error(struct bufferevent* e, short error, void* data)
 
 void connection_read(struct bufferevent* e, void* data)
 {
-    struct connection* c = (struct connection*)data;
     char buf[READ_BUF_SIZE];
+#if DEBUG
+    struct connection* c = (struct connection*)data;
     Dprintf("Read on fd %d\n", c->c_fd);
+#else
+    (void) data;
+#endif
     while (1) {
         ssize_t amt_read = 0;
         if ((amt_read = bufferevent_read(e, buf, READ_BUF_SIZE)) < 0) {
