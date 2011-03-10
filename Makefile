@@ -1,6 +1,5 @@
 SOURCES := $(wildcard *.c)
-OBJECTS := $(SOURCES:.c=.o)
-TARGETS := evecho
+TARGETS := evecho timesend
 PUPPET_TARGETS := evecho-32 evecho-64
 
 CFLAGS += -ggdb -Wall -Wextra -pedantic --std=c99
@@ -8,7 +7,7 @@ LDFLAGS += -levent -lrt
 
 all: $(TARGETS)
 
-evecho: $(OBJECTS)
+evecho: evecho.o connection.o
 	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) $^
 
 puppet: $(PUPPET_TARGETS)

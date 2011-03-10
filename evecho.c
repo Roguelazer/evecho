@@ -70,6 +70,7 @@ int setup_listener(const char* restrict address, const char* restrict svc)
     struct addrinfo *ai, *rp;
     struct addrinfo hints;
     int reuseaddr = 1;
+    memset(&hints, 0, sizeof(struct addrinfo));
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_PASSIVE;
@@ -96,7 +97,7 @@ int setup_listener(const char* restrict address, const char* restrict svc)
 #if DEBUG
     } else {
 #else
-    } else if ((strlen(svc) == 1) && (svc[0] == '0')) {
+    } else if (verbose || ((strlen(svc) == 1) && (svc[0] == '0'))) {
 #endif
         struct sockaddr sin;
         socklen_t sin_len = sizeof(struct sockaddr);
