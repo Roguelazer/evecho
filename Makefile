@@ -1,4 +1,5 @@
-SOURCES := $(wildcard *.c *.h)
+SOURCES := $(wildcard *.c)
+OBJECTS := $(SOURCES:.c=.o)
 TARGETS := evecho
 PUPPET_TARGETS := evecho-32 evecho-64
 
@@ -6,6 +7,9 @@ CFLAGS += -ggdb -Wall -Wextra -pedantic --std=c99
 LDFLAGS += -levent
 
 all: $(TARGETS)
+
+evecho: $(OBJECTS)
+	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) $^
 
 puppet: $(PUPPET_TARGETS)
 
@@ -16,14 +20,10 @@ force: clean all
 clean:
 	rm -f $(TARGETS) $(PUPPET_TARGETS) $(TEST_TARGETS) *.o
 
-evecho-32: $(SOURCES)
-	$(CC) -o $@ $(CFLAGS) -m32 $(filter %.c,$^)
-
-evecho-64: $(SOURCES)
-	$(CC) -o $@ $(CFLAGS) -m64 $(filter %.c,$^)
-
 dep:
 	sh ./automake.sh
 
 #### AUTO ####
+connection.o: connection.c connection.h
+evecho.o: evecho.c debugs.h connection.h
 #### END AUTO ####

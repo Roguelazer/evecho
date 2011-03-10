@@ -1,3 +1,8 @@
+#define _XOPEN_SOURCE 600
+/* For some reason, event.h doesn't work with C99 unless _GNU_SOURCE is
+ * defined (no u_char in _POSIX_SOURCE?) */
+#define _GNU_SOURCE
+
 #include <sys/types.h>
 #include <event-config.h>
 #include <event.h>
@@ -11,14 +16,13 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <netdb.h>
+#include <fcntl.h>
+#include <errno.h>
 
 #include "debugs.h"
+#include "connection.h"
 
-struct connection
-{
-    struct bufferevent* c_be;
-    int c_fd;
-};
+#define MAX_CONNS 128
 
 void print_help(void)
 {
@@ -29,6 +33,16 @@ void print_help(void)
             "    -p port        Listen on port <port>\n"
             "    -b address     Bind to address <address>\n"
             "    -h             Show this help\n");
+}
+
+int make_nonblocking(int fd)
+{
+    long current;
+    if ((current = fcntl(fd, F_GETFL)) < 0)
+        return -1;
+    if (fcntl(fd, F_SETFL, current|O_NONBLOCK) < 0)
+        return -1;
+    return 0;
 }
 
 int setup_listener(const char* address, const char* svc)
@@ -46,6 +60,11 @@ int setup_listener(const char* address, const char* svc)
     for (rp = ai; rp != NULL; rp=rp->ai_next) {
         if ((fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol)) < 0)
             continue;
+        if (make_nonblocking(fd)) {
+            perror("make_nonblocking");
+            close(fd);
+            return -1;
+        }
         if (bind(fd, rp->ai_addr, rp->ai_addrlen) == 0)
             break;
         close(fd);
@@ -54,23 +73,65 @@ int setup_listener(const char* address, const char* svc)
         fprintf(stderr, "Could not bind to %s:%s\n", address, svc);
         return -1;
     } else {
-        struct sockaddr* addr = rp->ai_addr;
-        size_t addrlen = rp->ai_addrlen;
+        struct sockaddr sin;
+        socklen_t sin_len = sizeof(struct sockaddr);
         char host[48];
         char srv[6];
-        if (getnameinfo(rp->ai_addr, rp->ai_addrlen, host, 48, srv, 6, NI_NUMERICHOST|NI_NUMERICSERV) < 0) {
+        if (getsockname(fd, &sin, &sin_len) < 0) {
+            perror("getsockname");
+            close(fd);
+            return -1;
+        }
+        if (getnameinfo(&sin, sin_len, host, 48, srv, 6, NI_NUMERICHOST|NI_NUMERICSERV) < 0) {
             perror("getnameinfo");
             close(fd);
             return -1;
         }
         fprintf(stderr, "Bound on %s:%s\n", host, srv);
     }
+    if (listen(fd, MAX_CONNS) < 0) {
+        perror("listen");
+        close(fd);
+        return -1;
+    }
     freeaddrinfo(ai);
     return fd;
 }
 
+void on_disconnect(struct connection* c)
+{
+    bufferevent_disable(c->c_be, EV_READ|EV_WRITE);
+}
+
 void on_connect(int fd, short evtype, void* data)
 {
+    (void) data;
+    (void) evtype;
+    int rfd;
+    struct sockaddr sin;
+    socklen_t len = sizeof(struct sockaddr);
+    struct connection* c;
+
+    if ((rfd = accept(fd, &sin, &len)) < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return;
+        }
+        else {
+            perror("accept");
+            return;
+        }
+    }
+    if (make_nonblocking(rfd) != 0) {
+        perror("make_nonblocking");
+        close(rfd);
+        return;
+    }
+    if ((c = connection_init(rfd, &on_disconnect)) == NULL) {
+        perror("connection_init");
+        close(rfd);
+        return;
+    }
+    Dprintf("Connect on fd %d (evtype 0x%x), newfd %d\n", fd, evtype, rfd);
     return;
 }
 
@@ -78,7 +139,7 @@ int main(int argc, char **argv)
 {
     int opt;
     int listen_socket;
-    struct event listen_event;
+    struct event *listen_event = malloc(sizeof(struct event));
     struct event_base* base;
     char* address = "0.0.0.0";
     char* service = "0";
@@ -101,13 +162,19 @@ int main(int argc, char **argv)
     base = event_init();
     if ((listen_socket = setup_listener(address, service)) < 0)
         return 1;
-    event_set(&listen_event, listen_socket, EV_READ|EV_WRITE, &on_connect, NULL);
-    event_add(&listen_event, NULL);
+    event_set(listen_event, listen_socket, EV_READ|EV_PERSIST, &on_connect, NULL);
+    if (event_add(listen_event, NULL) != 0) {
+        perror("event_add");
+        return 1;
+    }
     if (event_base_dispatch(base) < 0) {
         perror("event_dispatch");
         return 1;
     }
-    dprintf("finished event_base_dispatch\n");
+    Dprintf("finished event_base_dispatch\n");
+    free(listen_event);
     event_base_free(base);
     return 0;
 }
+
+/* vim: set expandtab ts=4 sw=4 sts=0: */
