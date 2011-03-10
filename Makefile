@@ -4,7 +4,7 @@ TARGETS := evecho
 PUPPET_TARGETS := evecho-32 evecho-64
 
 CFLAGS += -ggdb -Wall -Wextra -pedantic --std=c99
-LDFLAGS += -levent
+LDFLAGS += -levent -lrt
 
 all: $(TARGETS)
 

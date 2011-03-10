@@ -15,19 +15,32 @@
 #include "connection.h"
 #include "debugs.h"
 
+static bool verbose = false;
+
+static void connection_shutdown(struct connection* c)
+{
+    if (verbose)
+        clock_gettime(CLOCK_MONOTONIC, &c->c_end_time);
+    c->c_dcb(c);
+}
+
+void connection_init_globals(bool verb)
+{
+    verbose = verb;
+}
+
 void connection_write(struct bufferevent* e, void* data)
 {
     struct connection* c = (struct connection*)data;
     Dprintf("Write on fd %d\n", c->c_fd);
     if (c->c_closing)
-        c->c_dcb(c);
+        connection_shutdown(c);
     else
         bufferevent_disable(e, EV_WRITE);
 }
 
 void connection_error(struct bufferevent* e, short error, void* data)
 {
-    (void)e;
     struct connection* c = (struct connection*)data;
 #if DEBUG
     if (error & EVBUFFER_READ)
@@ -51,7 +64,7 @@ void connection_error(struct bufferevent* e, short error, void* data)
         c->c_closing = true;
     }
     else {
-        c->c_dcb(c);
+        connection_shutdown(c);
     }
 }
 
@@ -66,6 +79,7 @@ void connection_read(struct bufferevent* e, void* data)
             perror("bufferevent_read");
             return;
         } else if (amt_read == 0) {
+            Dprintf("Read 0 bytes\n");
             break;
         } else {
             c->c_bytes_read += amt_read;
@@ -124,6 +138,8 @@ struct connection* connection_init(int fd, disconnectcb dcb)
     bufferevent_setwatermark(c->c_be, EV_WRITE, 0, 0);
     c->c_dcb = dcb;
     bufferevent_enable(c->c_be, EV_READ);
+    if (verbose)
+        clock_gettime(CLOCK_MONOTONIC, &c->c_start_time);
     return c;
 }
 

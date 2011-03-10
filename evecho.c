@@ -6,7 +6,6 @@
 #include <sys/types.h>
 #include <event-config.h>
 #include <event.h>
-#include <sys/time.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,6 +23,12 @@
 
 #define MAX_CONNS 128
 
+#if DEBUG
+static bool verbose = true;
+#else
+static bool verbose = false;
+#endif
+
 void print_help(void)
 {
     fprintf(stderr,
@@ -32,7 +37,20 @@ void print_help(void)
             "Options:\n"
             "    -p port        Listen on port <port>\n"
             "    -b address     Bind to address <address>\n"
+            "    -v             Be more verbose\n"
             "    -h             Show this help\n");
+}
+
+static void timespec_subtract(struct timespec* restrict res, struct timespec* lhs, struct timespec* rhs)
+{
+    res->tv_sec = lhs->tv_sec - rhs->tv_sec;
+    if (rhs->tv_nsec > lhs->tv_nsec) {
+        res->tv_sec-=1;
+        res->tv_nsec = rhs->tv_nsec - lhs->tv_nsec;
+    }
+    else {
+        res->tv_nsec = lhs->tv_nsec - rhs->tv_nsec;
+    }
 }
 
 int make_nonblocking(int fd)
@@ -107,7 +125,13 @@ int setup_listener(const char* restrict address, const char* restrict svc)
 void on_disconnect(struct connection* restrict c)
 {
     bufferevent_disable(c->c_be, EV_READ|EV_WRITE);
-    Dprintf("Cleaning up connection to %s:%s\n", c->c_host, c->c_srv);
+    if (verbose) {
+        struct timespec delta;
+        timespec_subtract(&delta, &c->c_end_time, &c->c_start_time);
+        printf("Cleaning up connection to %s:%s\n", c->c_host, c->c_srv);
+        printf("\tConnection sent %zd bytes\n", c->c_bytes_read);
+        printf("\tConnection active %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
+    }
     connection_free(c);
 }
 
@@ -139,7 +163,8 @@ void on_connect(int fd, short evtype, void* data)
         close(rfd);
         return;
     }
-    Dprintf("Connected to %s:%s on fd %d\n", c->c_host, c->c_srv, rfd);
+    if (verbose)
+        printf("Connected to %s:%s on fd %d\n", c->c_host, c->c_srv, rfd);
     return;
 }
 
@@ -151,7 +176,7 @@ int main(int argc, char **argv)
     struct event_base* base;
     char* address = "0.0.0.0";
     char* service = "0";
-    while ((opt = getopt(argc, argv, "hb:p:")) != -1) {
+    while ((opt = getopt(argc, argv, "hb:p:v")) != -1) {
         switch (opt) {
             case 'h':
                 print_help();
@@ -162,11 +187,15 @@ int main(int argc, char **argv)
             case 'b':
                 address = strdup(optarg);
                 break;
+            case 'v':
+                verbose = true;
+                break;
             default:
                 print_help();
                 return 1;
         }
     }
+    connection_init_globals(verbose);
     base = event_init();
     if ((listen_socket = setup_listener(address, service)) < 0)
         return 1;

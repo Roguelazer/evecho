@@ -3,6 +3,7 @@
 
 #include <sys/types.h>
 #include <stdbool.h>
+#include <time.h>
 #include <event.h>
 
 #define READ_BUF_SIZE 4096
@@ -19,7 +20,11 @@ struct connection
     char* c_srv;
     size_t c_bytes_read;
     bool c_closing;
+    struct timespec c_start_time;
+    struct timespec c_end_time;
 };
+
+void connection_init_globals(bool);
 
 struct connection* connection_init(int, disconnectcb);
 void connection_free(struct connection*);
