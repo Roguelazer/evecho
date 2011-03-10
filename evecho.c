@@ -143,8 +143,8 @@ int main(int argc, char **argv)
     struct event_base* base;
     char* address = "0.0.0.0";
     char* service = "0";
-	while ((opt = getopt(argc, argv, "hb:p:")) != -1) {
-		switch (opt) {
+    while ((opt = getopt(argc, argv, "hb:p:")) != -1) {
+        switch (opt) {
             case 'h':
                 print_help();
                 return 0;
@@ -154,9 +154,9 @@ int main(int argc, char **argv)
             case 'b':
                 address = strdup(optarg);
                 break;
-			default:
-				print_help();
-				return 1;
+            default:
+                print_help();
+                return 1;
         }
     }
     base = event_init();
