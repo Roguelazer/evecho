@@ -1,5 +1,6 @@
-#include <event-config.h>
 #include <sys/types.h>
+#include <event-config.h>
+#include <event.h>
 #include <sys/time.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -7,10 +8,11 @@
 #include <stdarg.h>
 #include <unistd.h>
 #include <evutil.h>
-#include <event.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <netdb.h>
+
+#include "debugs.h"
 
 struct connection
 {
@@ -77,6 +79,7 @@ int main(int argc, char **argv)
     int opt;
     int listen_socket;
     struct event listen_event;
+    struct event_base* base;
     char* address = "0.0.0.0";
     char* service = "0";
 	while ((opt = getopt(argc, argv, "hb:p:")) != -1) {
@@ -95,14 +98,16 @@ int main(int argc, char **argv)
 				return 1;
         }
     }
-    event_init();
+    base = event_init();
     if ((listen_socket = setup_listener(address, service)) < 0)
         return 1;
     event_set(&listen_event, listen_socket, EV_READ|EV_WRITE, &on_connect, NULL);
     event_add(&listen_event, NULL);
-    if (event_dispatch() < 0) {
+    if (event_base_dispatch(base) < 0) {
         perror("event_dispatch");
         return 1;
     }
+    dprintf("finished event_base_dispatch\n");
+    event_base_free(base);
     return 0;
 }

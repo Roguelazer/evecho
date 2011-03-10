@@ -2,7 +2,7 @@ SOURCES := $(wildcard *.c *.h)
 TARGETS := evecho
 PUPPET_TARGETS := evecho-32 evecho-64
 
-CFLAGS += -ggdb -Wall -Wextra -pedantic
+CFLAGS += -ggdb -Wall -Wextra -pedantic --std=c99
 LDFLAGS += -levent
 
 all: $(TARGETS)
@@ -15,7 +15,6 @@ force: clean all
 .PHONY : clean 
 clean:
 	rm -f $(TARGETS) $(PUPPET_TARGETS) $(TEST_TARGETS) *.o
-	rm -rf build
 
 evecho-32: $(SOURCES)
 	$(CC) -o $@ $(CFLAGS) -m32 $(filter %.c,$^)
