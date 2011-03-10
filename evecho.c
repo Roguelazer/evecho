@@ -45,7 +45,7 @@ int make_nonblocking(int fd)
     return 0;
 }
 
-int setup_listener(const char* address, const char* svc)
+int setup_listener(const char* restrict address, const char* restrict svc)
 {
     int fd, err;
     struct addrinfo *ai, *rp;
@@ -72,7 +72,7 @@ int setup_listener(const char* address, const char* svc)
     if (rp == NULL) {
         fprintf(stderr, "Could not bind to %s:%s\n", address, svc);
         return -1;
-    } else {
+    } else if ((strlen(svc) == 1) && (svc[0] == '0')) {
         struct sockaddr sin;
         socklen_t sin_len = sizeof(struct sockaddr);
         char host[48];
@@ -98,7 +98,7 @@ int setup_listener(const char* address, const char* svc)
     return fd;
 }
 
-void on_disconnect(struct connection* c)
+void on_disconnect(struct connection* restrict c)
 {
     bufferevent_disable(c->c_be, EV_READ|EV_WRITE);
 }
@@ -117,17 +117,17 @@ void on_connect(int fd, short evtype, void* data)
             return;
         }
         else {
-            perror("accept");
+            Dperror("accept");
             return;
         }
     }
     if (make_nonblocking(rfd) != 0) {
-        perror("make_nonblocking");
+        Dperror("make_nonblocking");
         close(rfd);
         return;
     }
     if ((c = connection_init(rfd, &on_disconnect)) == NULL) {
-        perror("connection_init");
+        Dperror("connection_init");
         close(rfd);
         return;
     }
