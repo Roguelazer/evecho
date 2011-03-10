@@ -44,7 +44,7 @@ void connection_error(struct bufferevent* e, short error, void* data)
 #else
     (void) error;
 #endif
-    printf("0x%zd bytes left in output buffer\n", c->c_be->output->buffer-c->c_be->output->orig_buffer);
+    Dprintf("0x%zd bytes left in output buffer\n", c->c_be->output->buffer-c->c_be->output->orig_buffer);
     c->c_dcb(c);
 }
 
