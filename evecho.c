@@ -50,6 +50,7 @@ int setup_listener(const char* restrict address, const char* restrict svc)
     int fd, err;
     struct addrinfo *ai, *rp;
     struct addrinfo hints;
+    int reuseaddr = 1;
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_PASSIVE;
@@ -65,6 +66,7 @@ int setup_listener(const char* restrict address, const char* restrict svc)
             close(fd);
             return -1;
         }
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuseaddr, sizeof(reuseaddr));
         if (bind(fd, rp->ai_addr, rp->ai_addrlen) == 0)
             break;
         close(fd);

@@ -2,9 +2,10 @@
 #define CONNECTION_H
 
 #include <sys/types.h>
+#include <stdbool.h>
 #include <event.h>
 
-#define READ_BUF_SIZE 1500
+#define READ_BUF_SIZE 4096
 
 struct connection;
 typedef void (*disconnectcb)(struct connection*);
@@ -16,6 +17,8 @@ struct connection
     disconnectcb c_dcb;
     char* c_host;
     char* c_srv;
+    size_t c_bytes_read;
+    bool c_closing;
 };
 
 struct connection* connection_init(int, disconnectcb);

@@ -17,13 +17,12 @@
 
 void connection_write(struct bufferevent* e, void* data)
 {
-#if DEBUG
     struct connection* c = (struct connection*)data;
     Dprintf("Write on fd %d\n", c->c_fd);
-#else
-    (void) data;
-#endif
-    bufferevent_disable(e, EV_WRITE);
+    if (c->c_closing)
+        c->c_dcb(c);
+    else
+        bufferevent_disable(e, EV_WRITE);
 }
 
 void connection_error(struct bufferevent* e, short error, void* data)
@@ -44,26 +43,33 @@ void connection_error(struct bufferevent* e, short error, void* data)
 #else
     (void) error;
 #endif
-    Dprintf("0x%zd bytes left in output buffer\n", c->c_be->output->buffer-c->c_be->output->orig_buffer);
-    c->c_dcb(c);
+    Dprintf("%zd bytes left in output buffer\n", EVBUFFER_LENGTH(c->c_be->output));
+    Dprintf("Read a total of %zd bytes\n", c->c_bytes_read);
+    if (EVBUFFER_LENGTH(c->c_be->output)) {
+        Dprintf("Still data to write; marking as closing\n");
+        bufferevent_disable(e, EV_READ);
+        c->c_closing = true;
+    }
+    else {
+        c->c_dcb(c);
+    }
 }
 
 void connection_read(struct bufferevent* e, void* data)
 {
     char buf[READ_BUF_SIZE];
-#if DEBUG
     struct connection* c = (struct connection*)data;
     Dprintf("Read on fd %d\n", c->c_fd);
-#else
-    (void) data;
-#endif
     while (1) {
         ssize_t amt_read = 0;
         if ((amt_read = bufferevent_read(e, buf, READ_BUF_SIZE)) < 0) {
             perror("bufferevent_read");
             return;
-        } else if (amt_read == 0)
+        } else if (amt_read == 0) {
             break;
+        } else {
+            c->c_bytes_read += amt_read;
+        }
         Dprintf("Read %zd bytes\n", amt_read);
         if (bufferevent_write(e, buf, amt_read)) {
             perror("bufferevent_write");
@@ -105,6 +111,8 @@ struct connection* connection_init(int fd, disconnectcb dcb)
     c->c_fd = fd;
     c->c_host = NULL;
     c->c_srv = NULL;
+    c->c_closing = false;
+    c->c_bytes_read = 0;
     if (!fill_name(c)) {
         c->c_host = malloc(1);
         c->c_srv = malloc(1);
