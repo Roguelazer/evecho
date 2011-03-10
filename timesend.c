@@ -25,10 +25,11 @@
 
 #define BUFFER_SIZE 1024
 
-struct timespec read_start, start, end, write_end, getaddr_start, getaddr_end, connect_start, connect_end, delta;
+struct timespec write_start, read_start, start, end, write_end, getaddr_start, getaddr_end, connect_start, connect_end, delta;
 struct event* remote_event;
 ssize_t total_read_bytes;
 bool read_started = false;
+bool write_started = false;
 
 static void timespec_subtract(struct timespec* restrict res, struct timespec* lhs, struct timespec* rhs)
 {
@@ -125,6 +126,10 @@ void on_activity(int s, short ev_type, void* data)
     }
     else if (ev_type & EV_WRITE) {
         ssize_t bytes_written_here;
+        if (!write_started) {
+            write_started = true;
+            clock_gettime(CLOCK_MONOTONIC, &write_start);
+        }
         while (ds->bytes_written < ds->data_size) {
             bytes_written_here = write(s, (ds->data + ds->bytes_written), (ds->data_size - ds->bytes_written));
             if (bytes_written_here < 0) {
@@ -208,7 +213,7 @@ int main(int argc, char** argv) {
     printf("  Host lookup:  %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
     timespec_subtract(&delta, &connect_end, &connect_start);
     printf("  Connect:      %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
-    timespec_subtract(&delta, &write_end, &start);
+    timespec_subtract(&delta, &write_end, &write_start);
     printf("  Writing:      %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
     timespec_subtract(&delta, &end, &read_start);
     printf("  Reading:      %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
