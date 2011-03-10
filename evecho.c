@@ -72,7 +72,11 @@ int setup_listener(const char* restrict address, const char* restrict svc)
     if (rp == NULL) {
         fprintf(stderr, "Could not bind to %s:%s\n", address, svc);
         return -1;
+#if DEBUG
+    } else {
+#else
     } else if ((strlen(svc) == 1) && (svc[0] == '0')) {
+#endif
         struct sockaddr sin;
         socklen_t sin_len = sizeof(struct sockaddr);
         char host[48];
@@ -101,6 +105,8 @@ int setup_listener(const char* restrict address, const char* restrict svc)
 void on_disconnect(struct connection* restrict c)
 {
     bufferevent_disable(c->c_be, EV_READ|EV_WRITE);
+    Dprintf("Cleaning up connection to %s:%s\n", c->c_host, c->c_srv);
+    connection_free(c);
 }
 
 void on_connect(int fd, short evtype, void* data)
@@ -131,7 +137,7 @@ void on_connect(int fd, short evtype, void* data)
         close(rfd);
         return;
     }
-    Dprintf("Connect on fd %d (evtype 0x%x), newfd %d\n", fd, evtype, rfd);
+    Dprintf("Connected to %s:%s on fd %d\n", c->c_host, c->c_srv, rfd);
     return;
 }
 

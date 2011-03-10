@@ -1,6 +1,10 @@
 #ifndef DEBUGS_H
 #define DEBUGS_H
 
+#include <stdio.h>
+#include <string.h>
+#include <errno.h>
+
 #define Jperror(lbl, format) { fprintf(stdout, format " [%s:%d] : %s\n", __FILE__, __LINE__, strerror(errno)) ; goto lbl; }
 #define Jperrori(lbl, format, ...) { fprintf(stdout, format " [%s:%d] : %s\n", ##__VA_ARGS__, __FILE__, __LINE__, strerror(errno)) ; goto lbl; }
 #if DEBUG

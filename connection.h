@@ -14,6 +14,8 @@ struct connection
     struct bufferevent* c_be;
     int c_fd;
     disconnectcb c_dcb;
+    char* c_host;
+    char* c_srv;
 };
 
 struct connection* connection_init(int, disconnectcb);
