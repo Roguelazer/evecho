@@ -17,6 +17,7 @@
 #include <netdb.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <signal.h>
 
 #include "debugs.h"
 #include "connection.h"
@@ -196,6 +197,7 @@ int main(int argc, char **argv)
         }
     }
     connection_init_globals(verbose);
+    signal(SIGPIPE, SIG_IGN);
     base = event_init();
     if ((listen_socket = setup_listener(address, service)) < 0)
         return 1;
