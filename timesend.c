@@ -44,7 +44,7 @@ static void timespec_subtract(struct timespec* restrict res, struct timespec* lh
 
 void print_help(void)
 {
-    fprintf(stderr, "timesend hostname port\n"
+    fprintf(stderr, "Usage: timesend hostname port\n"
             "Reads data from stdin, sends to port\n");
 }
 
@@ -59,7 +59,7 @@ int do_connect(const char* restrict host, const char* restrict svc)
     memset(&hints, 0, sizeof(struct addrinfo));
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = 0;
+    hints.ai_flags = AI_NUMERICSERV;
 
     clock_gettime(CLOCK_MONOTONIC, &getaddr_start);
     if (getaddrinfo(host, svc, &hints, &result) != 0)
