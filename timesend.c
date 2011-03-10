@@ -25,7 +25,7 @@
 
 #define BUFFER_SIZE 1024
 
-struct timespec write_start, read_start, start, end, write_end, getaddr_start, getaddr_end, connect_start, connect_end, delta;
+struct timespec write_start, read_start, start, end, write_end, getaddr_start, getaddr_end, connect_start, connect_end, delta, stdin_start, stdin_end;
 struct event* remote_event;
 ssize_t total_read_bytes;
 bool read_started = false;
@@ -171,7 +171,7 @@ int main(int argc, char** argv) {
     address = strdup(argv[1]);
     service = strdup(argv[2]);
 
-
+    clock_gettime(CLOCK_MONOTONIC, &stdin_start);
     /* Start by reading all of the data from stdin */
     while(true) {
         bytes_read = read(STDIN_FILENO, buf, BUFFER_SIZE);
@@ -191,24 +191,28 @@ int main(int argc, char** argv) {
             data_size += bytes_read;
         }
     }
+    clock_gettime(CLOCK_MONOTONIC, &stdin_end);
 
     data_status->data = data;
     data_status->bytes_written = 0;
     data_status->data_size = data_size;
+
+    clock_gettime(CLOCK_MONOTONIC, &start);
 
     base = event_init();
     if ((sock = do_connect(address, service)) < 0) {
         perror("connect");
         return 1;
     }
-    clock_gettime(CLOCK_MONOTONIC, &start);
     event_set(remote_event, sock, EV_WRITE|EV_READ|EV_PERSIST, &on_activity, data_status);
     event_add(remote_event, NULL);
 
     event_dispatch();
 
+    timespec_subtract(&delta, &stdin_end, &stdin_start);
+    printf("Reading stdin:  %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
     timespec_subtract(&delta, &end, &start);
-    printf("Total time:     %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
+    printf("Total:          %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
     timespec_subtract(&delta, &getaddr_end, &getaddr_start);
     printf("  Host lookup:  %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
     timespec_subtract(&delta, &connect_end, &connect_start);
