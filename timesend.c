@@ -51,6 +51,7 @@ void print_help(void)
             "\n"
             "Options\n"
             "  -c FILE      Write csv to file FILE instead of human-readable to stdout\n"
+            "  -n NUM       Send NUM streams in parallel\n"
             "\n"
             "CSV Format:\n"
             "total time,lookup time,connect time,writing time,reading time,sent bytes,received bytes\n");
@@ -106,11 +107,13 @@ struct data_status {
     char* data;
     size_t data_size;
     size_t bytes_written;
+    int evt_idx;
 };
 
 void on_activity(int s, short ev_type, void* data)
 {
     struct data_status* ds = (struct data_status*)data;
+    int i = ds->evt_idx;
     if (ev_type & EV_READ) {
         if (!read_started) {
             read_started = true;
@@ -153,9 +156,9 @@ void on_activity(int s, short ev_type, void* data)
         }
         shutdown(s, SHUT_WR);
         clock_gettime(CLOCK_MONOTONIC, &write_end);
-        event_del(remote_event);
-        event_set(remote_event, s, EV_READ|EV_PERSIST, &on_activity, ds);
-        event_add(remote_event, NULL);
+        event_del(&remote_event[i]);
+        event_set(&remote_event[i], s, EV_READ|EV_PERSIST, &on_activity, ds);
+        event_add(&remote_event[i], NULL);
     }
 }
 
@@ -183,11 +186,13 @@ int main(int argc, char** argv) {
     int sock;
     ssize_t bytes_read;
     char opt;
-    struct data_status* data_status = malloc(sizeof(struct data_status));
+    long num_items = 1;
+    struct data_status* data_status;
+    int i;
 
     char* csv_output = NULL;
 
-    while ((opt = getopt(argc, argv, "hc:H:p:")) != -1) {
+    while ((opt = getopt(argc, argv, "hc:H:p:n:")) != -1) {
         switch(opt) {
             case 'h':
                 print_help();
@@ -198,6 +203,13 @@ int main(int argc, char** argv) {
             case 'p':
                 service = strdup(optarg);
                 break;
+            case 'n':
+                num_items = atol(optarg);
+                if (num_items < 1) {
+                    fprintf(stderr, "-n must be >=1\n");
+                    return 1;
+                }
+                break;
             case 'c':
                 csv_output = strdup(optarg);
                 break;
@@ -206,7 +218,8 @@ int main(int argc, char** argv) {
                 return 1;
         }
     }
-    remote_event = malloc(sizeof(struct event));
+    remote_event = malloc(sizeof(struct event) * num_items);
+    data_status = malloc(sizeof(struct data_status) * num_items);
 
     if (address == NULL || service == NULL) {
         print_help();
@@ -235,18 +248,21 @@ int main(int argc, char** argv) {
     }
     clock_gettime(CLOCK_MONOTONIC, &stdin_end);
 
-    data_status->data = data;
-    data_status->bytes_written = 0;
-    data_status->data_size = data_size;
-
     base = event_init();
     clock_gettime(CLOCK_MONOTONIC, &start);
-    if ((sock = do_connect(address, service)) < 0) {
-        perror("connect");
-        return 1;
+    for (i=0; i < num_items; ++i) {
+        if ((sock = do_connect(address, service)) < 0) {
+            perror("connect");
+            return 1;
+        }
+        (&data_status[i])->data = data;
+        (&data_status[i])->bytes_written = 0;
+        (&data_status[i])->data_size = data_size;
+        (&data_status[i])->evt_idx = i;
+        memset((&remote_event[i]), 0, sizeof(struct event));
+        event_set((&remote_event[i]), sock, EV_WRITE|EV_READ|EV_PERSIST, &on_activity, (&data_status[i]));
+        event_add((&remote_event[i]), NULL);
     }
-    event_set(remote_event, sock, EV_WRITE|EV_READ|EV_PERSIST, &on_activity, data_status);
-    event_add(remote_event, NULL);
 
     event_dispatch();
 
