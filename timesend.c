@@ -22,6 +22,7 @@
 #include <event.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <getopt.h>
 
 #define BUFFER_SIZE 1024
 
@@ -45,8 +46,14 @@ static void timespec_subtract(struct timespec* restrict res, struct timespec* lh
 
 void print_help(void)
 {
-    fprintf(stderr, "Usage: timesend hostname port\n"
-            "Reads data from stdin, sends to port\n");
+    fprintf(stderr, "Usage: timesend -H hostname -p port\n"
+            "Reads data from stdin, sends to port\n"
+            "\n"
+            "Options\n"
+            "  -c FILE      Write csv to file FILE instead of human-readable to stdout\n"
+            "\n"
+            "CSV Format:\n"
+            "total time,lookup time,connect time,writing time,reading time,sent bytes,received bytes\n");
 }
 
 int do_connect(const char* restrict host, const char* restrict svc)
@@ -149,10 +156,22 @@ void on_activity(int s, short ev_type, void* data)
     }
 }
 
+int create_csv(char* csv)
+{
+    int err;
+    FILE* f;
+    if ((err = creat(csv, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP)) < 0)
+        return -1;
+    if ((f = fopen(csv, "a")) == NULL)
+        return -1;
+    fprintf(f, "# total, lookup, connect, writing, reading, bytes_sent, bytes_received\n");
+    fclose(f);
+    return 0;
+}
 
 int main(int argc, char** argv) {
-    char* address;
-    char* service;
+    char* address = NULL;
+    char* service = NULL;
     char* data = malloc(BUFFER_SIZE);
     size_t data_size = 0;
     size_t data_alloced = BUFFER_SIZE;
@@ -160,13 +179,35 @@ int main(int argc, char** argv) {
     char buf[BUFFER_SIZE];
     int sock;
     ssize_t bytes_read;
+    char opt;
     struct data_status* data_status = malloc(sizeof(struct data_status));
 
+    char* csv_output = NULL;
+
+    while ((opt = getopt(argc, argv, "hc:H:p:")) != -1) {
+        switch(opt) {
+            case 'h':
+                print_help();
+                return 0;
+            case 'H':
+                address = strdup(optarg);
+                break;
+            case 'p':
+                service = strdup(optarg);
+                break;
+            case 'c':
+                csv_output = strdup(optarg);
+                break;
+            default:
+                print_help();
+                return 1;
+        }
+    }
     remote_event = malloc(sizeof(struct event));
 
-    if (argc != 3) {
+    if (address == NULL || service == NULL) {
         print_help();
-        exit(2);
+        return 1;
     }
     address = strdup(argv[1]);
     service = strdup(argv[2]);
@@ -209,26 +250,51 @@ int main(int argc, char** argv) {
 
     event_dispatch();
 
-    timespec_subtract(&delta, &stdin_end, &stdin_start);
-    printf("Reading stdin:  %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
-    timespec_subtract(&delta, &end, &start);
-    printf("Total:          %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
-    timespec_subtract(&delta, &getaddr_end, &getaddr_start);
-    printf("  Host lookup:  %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
-    timespec_subtract(&delta, &connect_end, &connect_start);
-    printf("  Connect:      %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
-    timespec_subtract(&delta, &write_end, &write_start);
-    printf("  Writing:      %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
-    timespec_subtract(&delta, &end, &read_start);
-    printf("  Reading:      %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
-    printf("Sent %zd bytes, recieved %zd bytes\n", data_status->bytes_written, total_read_bytes);
-
+    if (csv_output == NULL) {
+        struct timespec delta;
+        timespec_subtract(&delta, &stdin_end, &stdin_start);
+        printf("Reading stdin:  %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
+        timespec_subtract(&delta, &end, &start);
+        printf("Total time:     %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
+        timespec_subtract(&delta, &getaddr_end, &getaddr_start);
+        printf("  Host lookup:  %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
+        timespec_subtract(&delta, &connect_end, &connect_start);
+        printf("  Connect:      %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
+        timespec_subtract(&delta, &write_end, &start);
+        printf("  Writing:      %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
+        timespec_subtract(&delta, &end, &read_start);
+        printf("  Reading:      %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
+        printf("Sent %zd bytes, recieved %zd bytes\n", data_status->bytes_written, total_read_bytes);
+    } else {
+        FILE* f;
+        struct timespec total,lookup,connect,writing,reading;
+        if (access(csv_output, F_OK) != 0) {
+            if (create_csv(csv_output) < 0) {
+                fprintf(stderr, "failure creating %s\n", csv_output);
+                goto end;
+            }
+        }
+        if ((f = fopen(csv_output, "a")) == NULL) {
+            fprintf(stderr, "failure opening %s\n", csv_output);
+            goto end;
+        }
+        timespec_subtract(&total, &end, &start);
+        timespec_subtract(&lookup,&getaddr_end,&getaddr_start);
+        timespec_subtract(&connect,&connect_end,&connect_start);
+        timespec_subtract(&writing,&write_end,&start);
+        timespec_subtract(&reading,&end,&read_start);
+        fprintf(f, "%lu.%09lu,%lu.%09lu,%lu.%09lu,%lu.%09lu,%lu.%09lu,%zd,%zd\n", total.tv_sec, total.tv_nsec,lookup.tv_sec,lookup.tv_nsec,connect.tv_sec,connect.tv_nsec,writing.tv_sec,writing.tv_nsec,reading.tv_sec,reading.tv_nsec,data_status->bytes_written,total_read_bytes);
+        fclose(f);
+    }
+end:
     free(address);
     free(service);
     free(remote_event);
     free(data_status);
     free(data);
     event_base_free(base);
+    if (csv_output != NULL)
+        free(csv_output);
     return 0;
 }
 /* vim: set expandtab ts=4 sw=4 sts=0: */
