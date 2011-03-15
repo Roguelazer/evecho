@@ -61,7 +61,7 @@ int do_connect(const char* restrict host, const char* restrict svc)
     struct addrinfo hints;
     struct addrinfo* result;
     struct addrinfo* rp;
-    int sfd;
+    int sfd, err;
     long current;
 
     memset(&hints, 0, sizeof(struct addrinfo));
@@ -70,13 +70,16 @@ int do_connect(const char* restrict host, const char* restrict svc)
     hints.ai_flags = AI_NUMERICSERV;
 
     clock_gettime(CLOCK_MONOTONIC, &getaddr_start);
-    if (getaddrinfo(host, svc, &hints, &result) != 0)
+    if ((err = getaddrinfo(host, svc, &hints, &result)) != 0) {
+        fprintf(stderr, "getaddr error %s", gai_strerror(err));
         return -1;
+    }
     clock_gettime(CLOCK_MONOTONIC, &getaddr_end);
     for (rp = result; rp != NULL; rp = rp->ai_next) {
         clock_gettime(CLOCK_MONOTONIC, &connect_start);
-        if ((sfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol)) < 0)
+        if ((sfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol)) < 0) {
             return -1;
+        }
         if (connect(sfd, rp->ai_addr, rp->ai_addrlen) != -1) {
             clock_gettime(CLOCK_MONOTONIC, &connect_end);
             break;
@@ -209,8 +212,6 @@ int main(int argc, char** argv) {
         print_help();
         return 1;
     }
-    address = strdup(argv[1]);
-    service = strdup(argv[2]);
 
     clock_gettime(CLOCK_MONOTONIC, &stdin_start);
     /* Start by reading all of the data from stdin */
@@ -237,8 +238,6 @@ int main(int argc, char** argv) {
     data_status->data = data;
     data_status->bytes_written = 0;
     data_status->data_size = data_size;
-
-    clock_gettime(CLOCK_MONOTONIC, &start);
 
     base = event_init();
     clock_gettime(CLOCK_MONOTONIC, &start);
