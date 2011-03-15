@@ -26,11 +26,11 @@
 
 #define BUFFER_SIZE 1024
 
-struct timespec write_start, read_start, start, end, write_end, getaddr_start, getaddr_end, connect_start, connect_end, delta, stdin_start, stdin_end;
+struct timespec write_start, read_start, start, end, write_end, getaddr_start, getaddr_end, connect_start, connect_end, stdin_start, stdin_end;
+struct timespec read_start, start, write_start, end, write_end, getaddr_start, getaddr_end, connect_start, connect_end;
 struct event* remote_event;
 ssize_t total_read_bytes;
-bool read_started = false;
-bool write_started = false;
+bool read_started = false, write_started = false;
 
 static void timespec_subtract(struct timespec* restrict res, struct timespec* lhs, struct timespec* rhs)
 {
@@ -241,6 +241,7 @@ int main(int argc, char** argv) {
     clock_gettime(CLOCK_MONOTONIC, &start);
 
     base = event_init();
+    clock_gettime(CLOCK_MONOTONIC, &start);
     if ((sock = do_connect(address, service)) < 0) {
         perror("connect");
         return 1;
@@ -281,7 +282,7 @@ int main(int argc, char** argv) {
         timespec_subtract(&total, &end, &start);
         timespec_subtract(&lookup,&getaddr_end,&getaddr_start);
         timespec_subtract(&connect,&connect_end,&connect_start);
-        timespec_subtract(&writing,&write_end,&start);
+        timespec_subtract(&writing,&write_end,&write_start);
         timespec_subtract(&reading,&end,&read_start);
         fprintf(f, "%lu.%09lu,%lu.%09lu,%lu.%09lu,%lu.%09lu,%lu.%09lu,%zd,%zd\n", total.tv_sec, total.tv_nsec,lookup.tv_sec,lookup.tv_nsec,connect.tv_sec,connect.tv_nsec,writing.tv_sec,writing.tv_nsec,reading.tv_sec,reading.tv_nsec,data_status->bytes_written,total_read_bytes);
         fclose(f);
