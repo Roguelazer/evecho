@@ -18,6 +18,8 @@
 #include <stdbool.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <netdb.h>
 #include <event.h>
 #include <fcntl.h>
@@ -31,6 +33,7 @@
 struct timespec stdin_start, stdin_end;
 ssize_t total_read_bytes;
 long num_items = 1;
+bool nodelay=false;
 
 struct ts_connection {
     char* data;
@@ -174,9 +177,15 @@ int do_connect(const char* restrict host, const char* restrict svc, struct ts_co
     }
     clock_gettime(CLOCK_MONOTONIC, ds->getaddr_end);
     for (rp = result; rp != NULL; rp = rp->ai_next) {
+        int one=1;
         clock_gettime(CLOCK_MONOTONIC, ds->connect_start);
         if ((sfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol)) < 0) {
             return -1;
+        }
+        if (nodelay) {
+            struct protoent *p;
+            p = getprotobyname("tcp");
+            setsockopt(sfd, p->p_proto, TCP_NODELAY, (char*)&one, sizeof(one));
         }
         if (connect(sfd, rp->ai_addr, rp->ai_addrlen) != -1) {
             clock_gettime(CLOCK_MONOTONIC, ds->connect_end);
@@ -205,10 +214,6 @@ void on_activity(int s, short ev_type, void* data)
     struct ts_connection* ds = (struct ts_connection*)data;
     if (ev_type & EV_READ) {
         int read_idx = ds->read_idx;
-        if (!ds->read_started) {
-            Dprintf("read_idx %d started\n", ds->read_idx);
-            ds->read_started = true;
-        }
         char buf[BUFFER_SIZE];
         ssize_t bytes_read;
         while (true) {
@@ -216,8 +221,6 @@ void on_activity(int s, short ev_type, void* data)
             if (bytes_read < 0) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK)
                     return;
-                perror("read");
-                exit(1);
             }
             else if (bytes_read == 0 && ds->bytes_read < ds->data_size) {
                 fprintf(stderr, "Read %zd bytes, expected to read %zd\n", ds->bytes_read, ds->data_size);
@@ -259,6 +262,14 @@ void on_activity(int s, short ev_type, void* data)
             bytes_written_here = write(s, (ds->data + ds->bytes_written), (ds->data_size - ds->bytes_written));
             if (bytes_written_here < 0) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    if (!ds->read_started) {
+                        ds->read_started = true;
+                        Dprintf("read_idx %d started\n", ds->read_idx);
+                        clock_gettime(CLOCK_MONOTONIC, &(ds->read_start[write_idx]));
+                    }
+                    event_del(ds->evt);
+                    event_set(ds->evt, s, EV_READ|EV_WRITE|EV_PERSIST, &on_activity, ds);
+                    event_add(ds->evt, NULL);
                     return;
                 }
                 perror("write");
@@ -269,7 +280,11 @@ void on_activity(int s, short ev_type, void* data)
         Dprintf("write_idx %d done\n", ds->write_idx);
         ds->bytes_written = 0;
         clock_gettime(CLOCK_MONOTONIC, &(ds->write_end[write_idx]));
-        clock_gettime(CLOCK_MONOTONIC, &(ds->read_start[write_idx]));
+        if (!ds->read_started) {
+            ds->read_started = true;
+            Dprintf("read_idx %d started\n", ds->read_idx);
+            clock_gettime(CLOCK_MONOTONIC, &(ds->read_start[write_idx]));
+        }
         ds->write_idx++;
         ds->write_started = false;
         event_del(ds->evt);
@@ -306,7 +321,7 @@ int main(int argc, char** argv) {
 
     char* csv_output = NULL;
 
-    while ((opt = getopt(argc, argv, "hc:H:p:n:N:")) != -1) {
+    while ((opt = getopt(argc, argv, "hc:H:p:n:N:D")) != -1) {
         switch(opt) {
             case 'h':
                 print_help();
@@ -323,6 +338,9 @@ int main(int argc, char** argv) {
                     fprintf(stderr, "-n must be >=1\n");
                     return 1;
                 }
+                break;
+            case 'D':
+                nodelay = true;
                 break;
             case 'N':
                 num_per_connection = atol(optarg);

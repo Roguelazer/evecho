@@ -14,6 +14,8 @@
 #include <evutil.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <netdb.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -29,6 +31,8 @@ static bool verbose = true;
 #else
 static bool verbose = false;
 #endif
+
+static bool nodelay = false;
 
 void print_help(void)
 {
@@ -160,6 +164,12 @@ void on_connect(int fd, short evtype, void* data)
         close(rfd);
         return;
     }
+    if (nodelay) {
+        int one = 1;
+        struct protoent *p;
+        p = getprotobyname("tcp");
+        setsockopt(rfd, p->p_proto, TCP_NODELAY, (char*)&one, sizeof(one));
+    }
     if ((c = connection_init(rfd, &on_disconnect)) == NULL) {
         Dperror("connection_init");
         close(rfd);
@@ -178,7 +188,7 @@ int main(int argc, char **argv)
     struct event_base* base;
     char* address = "0.0.0.0";
     char* service = "0";
-    while ((opt = getopt(argc, argv, "hb:p:v")) != -1) {
+    while ((opt = getopt(argc, argv, "hb:p:vD")) != -1) {
         switch (opt) {
             case 'h':
                 print_help();
@@ -191,6 +201,9 @@ int main(int argc, char **argv)
                 break;
             case 'v':
                 verbose = true;
+                break;
+            case 'D':
+                nodelay = true;
                 break;
             default:
                 print_help();
