@@ -166,9 +166,7 @@ void on_connect(int fd, short evtype, void* data)
     }
     if (nodelay) {
         int one = 1;
-        struct protoent *p;
-        p = getprotobyname("tcp");
-        setsockopt(rfd, p->p_proto, TCP_NODELAY, (char*)&one, sizeof(one));
+        setsockopt(rfd, IPPROTO_TCP, TCP_NODELAY, (char*)&one, sizeof(one));
     }
     if ((c = connection_init(rfd, &on_disconnect)) == NULL) {
         Dperror("connection_init");

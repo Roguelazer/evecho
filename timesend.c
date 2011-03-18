@@ -183,9 +183,7 @@ int do_connect(const char* restrict host, const char* restrict svc, struct ts_co
             return -1;
         }
         if (nodelay) {
-            struct protoent *p;
-            p = getprotobyname("tcp");
-            setsockopt(sfd, p->p_proto, TCP_NODELAY, (char*)&one, sizeof(one));
+            setsockopt(sfd, IPPROTO_TCP, TCP_NODELAY, (char*)&one, sizeof(one));
         }
         if (connect(sfd, rp->ai_addr, rp->ai_addrlen) != -1) {
             clock_gettime(CLOCK_MONOTONIC, ds->connect_end);
