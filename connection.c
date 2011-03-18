@@ -32,11 +32,15 @@ void connection_init_globals(bool verb)
 void connection_write(struct bufferevent* e, void* data)
 {
     struct connection* c = (struct connection*)data;
-    Dprintf("Write on fd %d\n", c->c_fd);
-    if (c->c_closing)
+    Dprintf("Write done on fd %d\n", c->c_fd);
+    if (c->c_closing) {
+        Dprintf("Connection closing\n");
         connection_shutdown(c);
-    else
+    }
+    else {
+        Dprintf("Disabling write\n");
         bufferevent_disable(e, EV_WRITE);
+    }
 }
 
 void connection_error(struct bufferevent* e, short error, void* data)
