@@ -31,7 +31,6 @@
 #define BUFFER_SIZE 1024
 
 struct timespec stdin_start, stdin_end;
-ssize_t total_read_bytes;
 long num_items = 1;
 bool nodelay=false;
 
@@ -40,6 +39,8 @@ struct ts_connection {
     size_t data_size;
     size_t bytes_written;
     size_t bytes_read;
+    size_t total_bytes_written;
+    size_t total_bytes_read;
     int evt_idx;
     int sock;
     bool done;
@@ -99,6 +100,8 @@ int ts_connection_init(int queries_per_connection, char* restrict data, size_t d
     ds->read_idx = 0;
     ds->read_started = false;
     ds->write_started = false;
+    ds->total_bytes_written = 0;
+    ds->total_bytes_read = 0;
     return 0;
 }
 
@@ -224,7 +227,7 @@ void on_activity(int s, short ev_type, void* data)
                 fprintf(stderr, "Read %zd bytes, expected to read %zd\n", ds->bytes_read, ds->data_size);
                 break;
             }
-            total_read_bytes += bytes_read;
+            ds->total_bytes_read += bytes_read;
             ds->bytes_read += bytes_read;
             if (ds->bytes_read >= ds->data_size) {
                 clock_gettime(CLOCK_MONOTONIC, &(ds->read_end[read_idx]));
@@ -274,6 +277,7 @@ void on_activity(int s, short ev_type, void* data)
                 exit(1);
             }
             ds->bytes_written += bytes_written_here;
+            ds->total_bytes_written += bytes_written_here;
         }
         Dprintf("write_idx %d done\n", ds->write_idx);
         ds->bytes_written = 0;
@@ -425,6 +429,8 @@ int main(int argc, char** argv) {
                 timespec_subtract(&delta, &(ds->read_end[j]), &(ds->read_start[j]));
                 printf("  (query % 5i) Reading:      %lu.%09lus\n", j, delta.tv_sec, delta.tv_nsec);
             }
+            printf("  Bytes written: %zu\n", ds->total_bytes_written);
+            printf("  Bytes read:    %zu\n", ds->total_bytes_read);
             printf("\n");
         }
     } else {
@@ -449,7 +455,7 @@ int main(int argc, char** argv) {
                 timespec_subtract(&connect,ds->connect_end,ds->connect_start);
                 timespec_subtract(&writing,&(ds->write_end[j]),&(ds->write_start[j]));
                 timespec_subtract(&reading,&(ds->read_end[j]),&(ds->read_start[j]));
-                fprintf(f, "%lu.%09lu,%lu.%09lu,%lu.%09lu,%lu.%09lu,%lu.%09lu,%zd,%zd\n", total.tv_sec, total.tv_nsec,lookup.tv_sec,lookup.tv_nsec,connect.tv_sec,connect.tv_nsec,writing.tv_sec,writing.tv_nsec,reading.tv_sec,reading.tv_nsec,ts_connection->bytes_written,total_read_bytes);
+                fprintf(f, "%lu.%09lu,%lu.%09lu,%lu.%09lu,%lu.%09lu,%lu.%09lu,%zd,%zd\n", total.tv_sec, total.tv_nsec,lookup.tv_sec,lookup.tv_nsec,connect.tv_sec,connect.tv_nsec,writing.tv_sec,writing.tv_nsec,reading.tv_sec,reading.tv_nsec,ds->total_bytes_written,ds->total_bytes_read);
             }
         }
         fclose(f);
