@@ -2,7 +2,7 @@ SOURCES := $(wildcard *.c)
 TARGETS := evecho timesend
 PUPPET_TARGETS := evecho-32 evecho-64
 
-CFLAGS += -ggdb -Wall -Wextra -pedantic --std=c99
+CFLAGS += -ggdb -Wall -Wextra -pedantic --std=c99 -lpthread
 LDFLAGS += -levent -lrt
 
 all: $(TARGETS)

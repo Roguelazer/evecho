@@ -25,6 +25,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <getopt.h>
+#include <pthread.h>
 
 #include "debugs.h"
 
@@ -32,6 +33,7 @@
 
 struct timespec stdin_start, stdin_end;
 long num_items = 1;
+long num_threads = 1;
 bool nodelay=false;
 
 struct ts_connection {
@@ -41,14 +43,14 @@ struct ts_connection {
     size_t bytes_read;
     size_t total_bytes_written;
     size_t total_bytes_read;
-    int evt_idx;
+    int query_id;
+    int thread_id;
     int sock;
     bool done;
     bool read_started;
     bool write_started;
     long num_queries;
-    long read_idx;
-    long write_idx;
+    long current_idx;
     struct timespec* write_start;
     struct timespec* read_start;
     struct timespec* read_end;
@@ -60,12 +62,13 @@ struct ts_connection {
     struct timespec* connect_start;
     struct timespec* connect_end;
     struct event* evt;
+    struct event_base* base;
 };
 
-int ts_connection_init(int, char* restrict, size_t, int, struct ts_connection* restrict);
+int ts_connection_init(int, char* restrict, size_t, struct ts_connection* restrict);
 int do_connect(const char* restrict, const char* restrict, struct ts_connection* restrict);
 
-int ts_connection_init(int queries_per_connection, char* restrict data, size_t data_size, int which, struct ts_connection* restrict ds)
+int ts_connection_init(int queries_per_connection, char* restrict data, size_t data_size, struct ts_connection* restrict ds)
 {
     ds->start = malloc(sizeof(struct timespec));
     ds->end = malloc(sizeof(struct timespec));
@@ -94,10 +97,8 @@ int ts_connection_init(int queries_per_connection, char* restrict data, size_t d
     ds->data = data;
     ds->bytes_written = 0;
     ds->data_size = data_size;
-    ds->evt_idx = which;
     ds->num_queries = queries_per_connection;
-    ds->write_idx = 0;
-    ds->read_idx = 0;
+    ds->current_idx = 0;
     ds->read_started = false;
     ds->write_started = false;
     ds->total_bytes_written = 0;
@@ -123,9 +124,9 @@ void ts_connection_free(struct ts_connection* restrict ds)
 
 struct ts_connection* ts_connection;
 
- bool all_done() {
+bool all_done() {
     int i;
-    for (i = 0; i < num_items; ++i) {
+    for (i = 0; i < num_items * num_threads; ++i) {
         if (!ts_connection[i].done) {
             return false;
         }
@@ -213,8 +214,8 @@ int do_connect(const char* restrict host, const char* restrict svc, struct ts_co
 void on_activity(int s, short ev_type, void* data)
 {
     struct ts_connection* ds = (struct ts_connection*)data;
+    long current_idx = ds->current_idx;
     if (ev_type & EV_READ) {
-        int read_idx = ds->read_idx;
         char buf[BUFFER_SIZE];
         ssize_t bytes_read;
         while (true) {
@@ -230,34 +231,38 @@ void on_activity(int s, short ev_type, void* data)
             ds->total_bytes_read += bytes_read;
             ds->bytes_read += bytes_read;
             if (ds->bytes_read >= ds->data_size) {
-                clock_gettime(CLOCK_MONOTONIC, &(ds->read_end[read_idx]));
+                clock_gettime(CLOCK_MONOTONIC, &(ds->read_end[current_idx]));
                 ds->bytes_read = 0;
                 break;
             }
         }
-        Dprintf("read_idx %d done\n", ds->read_idx);
         ds->read_started = false;
-        ds->read_idx++;
-        if (read_idx >= ds->num_queries - 1) {
+        Dprintf("Finished read on %d:%d:%d\n", ds->thread_id, ds->query_id, current_idx);
+        ds->current_idx++;
+        if (current_idx >= ds->num_queries - 1) {
             ds->done = true;
             event_del(ds->evt);
+            Dprintf("%d:%d done\n", ds->thread_id, ds->query_id);
             clock_gettime(CLOCK_MONOTONIC, ds->end);
+            Dprintf("Checking if %d is all done\n", ds->thread_id);
             if (all_done()) {
+                Dprintf("All threads finished\n");
                 event_loopbreak();
             }
         } else {
             event_del(ds->evt);
+            event_base_set(ds->base, ds->evt);
             event_set(ds->evt, s, EV_WRITE|EV_PERSIST, &on_activity, ds);
             event_add(ds->evt, NULL);
         }
     }
     else if (ev_type & EV_WRITE) {
         ssize_t bytes_written_here;
-        int write_idx = ds->write_idx;
+        int current_idx = ds->current_idx;
         if (!ds->write_started) {
-            Dprintf("write_idx %d started\n", write_idx);
+            Dprintf("Starting write on %d:%d:%d\n", ds->thread_id, ds->query_id, current_idx);
             ds->write_started = true;
-            clock_gettime(CLOCK_MONOTONIC, &(ds->write_start[write_idx]));
+            clock_gettime(CLOCK_MONOTONIC, &(ds->write_start[current_idx]));
         }
         while (ds->bytes_written < ds->data_size) {
             bytes_written_here = write(s, (ds->data + ds->bytes_written), (ds->data_size - ds->bytes_written));
@@ -265,10 +270,11 @@ void on_activity(int s, short ev_type, void* data)
                 if (errno == EAGAIN || errno == EWOULDBLOCK) {
                     if (!ds->read_started) {
                         ds->read_started = true;
-                        Dprintf("read_idx %d started\n", ds->read_idx);
-                        clock_gettime(CLOCK_MONOTONIC, &(ds->read_start[write_idx]));
+                        Dprintf("Starting read on %d:%d:%d\n", ds->thread_id, ds->query_id, current_idx);
+                        clock_gettime(CLOCK_MONOTONIC, &(ds->read_start[current_idx]));
                     }
                     event_del(ds->evt);
+                    event_base_set(ds->base, ds->evt);
                     event_set(ds->evt, s, EV_READ|EV_WRITE|EV_PERSIST, &on_activity, ds);
                     event_add(ds->evt, NULL);
                     return;
@@ -279,15 +285,13 @@ void on_activity(int s, short ev_type, void* data)
             ds->bytes_written += bytes_written_here;
             ds->total_bytes_written += bytes_written_here;
         }
-        Dprintf("write_idx %d done\n", ds->write_idx);
         ds->bytes_written = 0;
-        clock_gettime(CLOCK_MONOTONIC, &(ds->write_end[write_idx]));
+        clock_gettime(CLOCK_MONOTONIC, &(ds->write_end[current_idx]));
         if (!ds->read_started) {
             ds->read_started = true;
-            Dprintf("read_idx %d started\n", ds->read_idx);
-            clock_gettime(CLOCK_MONOTONIC, &(ds->read_start[write_idx]));
+            Dprintf("Starting read on %d:%d:%d\n", ds->thread_id, ds->query_id, current_idx);
+            clock_gettime(CLOCK_MONOTONIC, &(ds->read_start[current_idx]));
         }
-        ds->write_idx++;
         ds->write_started = false;
         event_del(ds->evt);
         event_set(ds->evt, s, EV_READ|EV_PERSIST, &on_activity, ds);
@@ -308,13 +312,61 @@ int create_csv(char* csv)
     return 0;
 }
 
+struct thread_args {
+    char* address;
+    char* service;
+    char* data;
+    size_t data_size;
+    struct ts_connection* ts_connection;
+    long num_per_connection;
+    int thread_id;
+};
+
+void* thread_entry(void* args)
+{
+    struct thread_args* a = (struct thread_args*)args;
+    struct ts_connection* ts_connection = a->ts_connection;
+    char* data = a->data;
+    size_t data_size = a->data_size;
+    int i;
+    char* address = a->address;
+    char* service = a->service;
+    long num_per_connection = a->num_per_connection;
+    struct event_base* base;
+
+    base = event_init();
+    
+    for (i=0; i<num_items; ++i) {
+        struct ts_connection* ds = ts_connection + i;
+        ds->thread_id = a->thread_id;
+        ds->query_id = i;
+        ds->base = base;
+        if (ts_connection_init(num_per_connection, data, data_size, ds) < 0) {
+            perror("connection_init");
+            return NULL;
+        }
+        clock_gettime(CLOCK_MONOTONIC, ds->start);
+        if ((ds->sock = do_connect(address, service, ts_connection + i)) < 0) {
+            perror("connect");
+            return NULL;
+        }
+        event_base_set(ds->base, ds->evt);
+        event_set(ds->evt, ds->sock, EV_WRITE|EV_READ|EV_PERSIST, &on_activity, ds);
+        event_add(ds->evt, NULL);
+    }
+
+    event_base_dispatch(base);
+
+    event_base_free(base);
+    return NULL;
+}
+
 int main(int argc, char** argv) {
     char* address = NULL;
     char* service = NULL;
     char* data = malloc(BUFFER_SIZE);
     size_t data_size = 0;
     size_t data_alloced = BUFFER_SIZE;
-    struct event_base* base;
     char buf[BUFFER_SIZE];
     ssize_t bytes_read;
     char opt;
@@ -323,7 +375,7 @@ int main(int argc, char** argv) {
 
     char* csv_output = NULL;
 
-    while ((opt = getopt(argc, argv, "hc:H:p:n:N:D")) != -1) {
+    while ((opt = getopt(argc, argv, "hc:H:p:n:N:Dt:")) != -1) {
         switch(opt) {
             case 'h':
                 print_help();
@@ -351,6 +403,14 @@ int main(int argc, char** argv) {
                     return 1;
                 } else if (num_per_connection > 99999) {
                     fprintf(stderr, "-N must be <= 99999\n");
+                    return 1;
+                }
+                break;
+            case 't':
+                num_threads = atol(optarg);
+                if (num_threads <1) {
+                    fprintf(stderr, "-t must be >= 1\n");
+                    return 1;
                 }
                 break;
             case 'c':
@@ -361,7 +421,7 @@ int main(int argc, char** argv) {
                 return 1;
         }
     }
-    ts_connection = malloc(sizeof(struct ts_connection) * num_items);
+    ts_connection = malloc(sizeof(struct ts_connection) * num_items * num_threads);
 
     if (address == NULL || service == NULL) {
         print_help();
@@ -390,48 +450,53 @@ int main(int argc, char** argv) {
     }
     clock_gettime(CLOCK_MONOTONIC, &stdin_end);
 
-    base = event_init();
-    
-    for (i=0; i<num_items; ++i) {
-        struct ts_connection* ds = &(ts_connection[i]);
-        if (ts_connection_init(num_per_connection, data, data_size, i, ds) < 0) {
-            perror("connection_init");
-            return 1;
-        }
-        clock_gettime(CLOCK_MONOTONIC, ds->start);
-        if ((ds->sock = do_connect(address, service, &ts_connection[i])) < 0) {
-            perror("connect");
-            return 1;
-        }
-        event_set(ds->evt, ds->sock, EV_WRITE|EV_READ|EV_PERSIST, &on_activity, ds);
-        event_add(ds->evt, NULL);
+    pthread_t* threads = malloc(sizeof(pthread_t) * num_threads);
+
+    for(i=0; i<num_threads; ++i) {
+        struct thread_args* a = malloc(sizeof(struct thread_args));
+        a->address = address;
+        a->service = service;
+        a->data = data;
+        a->data_size = data_size;
+        a->ts_connection = (ts_connection + num_items * i);
+        a->num_per_connection = num_per_connection;
+        a->thread_id = i;
+        pthread_create(&(threads[i]), NULL, thread_entry, a);
     }
 
-    event_dispatch();
+    for(i=0; i<num_threads; ++i) {
+        pthread_join(threads[i], NULL);
+    }
 
     if (csv_output == NULL) {
         struct timespec delta;
-        int i;
-        int j;
+        int i, j, thread;
         timespec_subtract(&delta, &stdin_end, &stdin_start);
         printf("Reading stdin:  %lu.%09lus\n\n", delta.tv_sec, delta.tv_nsec);
-        for (i = 0; i < num_items; ++i) {
-            struct ts_connection* ds = &(ts_connection[i]);
-            timespec_subtract(&delta, ds->end, ds->start);
-            printf("Total time:     %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
-            timespec_subtract(&delta, ds->getaddr_end, ds->getaddr_start);
-            printf("  Host lookup:  %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
-            timespec_subtract(&delta, ds->connect_end, ds->connect_start);
-            printf("  Connect:      %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
-            for (j = 0; j < num_per_connection; ++j) {
-                timespec_subtract(&delta, &(ds->write_end[j]), &(ds->write_start[j]));
-                printf("  (query % 5i) Writing:      %lu.%09lus\n", j, delta.tv_sec, delta.tv_nsec);
-                timespec_subtract(&delta, &(ds->read_end[j]), &(ds->read_start[j]));
-                printf("  (query % 5i) Reading:      %lu.%09lus\n", j, delta.tv_sec, delta.tv_nsec);
+        for (thread=0; thread < num_threads; ++thread) {
+            for (i = 0; i < num_items; ++i) {
+                struct ts_connection* ds = ts_connection + thread*num_items + i;
+                printf("Thread %d item %d\n", thread, i);
+                timespec_subtract(&delta, ds->end, ds->start);
+                if (delta.tv_sec > 2) {
+                    fprintf(stderr, "ERROR: bad delta\n");
+                    return 1;
+                }
+                printf("Total time:     %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
+                timespec_subtract(&delta, ds->getaddr_end, ds->getaddr_start);
+                printf("  Host lookup:  %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
+                timespec_subtract(&delta, ds->connect_end, ds->connect_start);
+                printf("  Connect:      %lu.%09lus\n", delta.tv_sec, delta.tv_nsec);
+                for (j = 0; j < num_per_connection; ++j) {
+                    timespec_subtract(&delta, &(ds->write_end[j]), &(ds->write_start[j]));
+                    printf("  (query % 5i) Writing:      %lu.%09lus\n", j, delta.tv_sec, delta.tv_nsec);
+                    timespec_subtract(&delta, &(ds->read_end[j]), &(ds->read_start[j]));
+                    printf("  (query % 5i) Reading:      %lu.%09lus\n", j, delta.tv_sec, delta.tv_nsec);
+                }
+                printf("  Bytes written: %zu\n", ds->total_bytes_written);
+                printf("  Bytes read:    %zu\n", ds->total_bytes_read);
+                printf("\n");
             }
-            printf("  Bytes written: %zu\n", ds->total_bytes_written);
-            printf("  Bytes read:    %zu\n", ds->total_bytes_read);
-            printf("\n");
         }
     } else {
         FILE* f;
@@ -447,7 +512,7 @@ int main(int argc, char** argv) {
             fprintf(stderr, "failure opening %s\n", csv_output);
             goto end;
         }
-        for (i = 0; i < num_items; ++i) {
+        for (i = 0; i < num_items * num_threads; ++i) {
             struct ts_connection* ds = &(ts_connection[i]);
             for (j = 0; j < num_per_connection; ++j) {
                 timespec_subtract(&total,ds->end,ds->start);
@@ -460,7 +525,7 @@ int main(int argc, char** argv) {
         }
         fclose(f);
     }
-    for (i=0;i<num_items;++i) {
+    for (i=0;i<num_items*num_threads;++i) {
         Dprintf("Freeing %d\n", i);
         ts_connection_free(&(ts_connection[i]));
     }
@@ -469,7 +534,6 @@ end:
     free(service);
     free(ts_connection);
     free(data);
-    event_base_free(base);
     if (csv_output != NULL)
         free(csv_output);
     return 0;
