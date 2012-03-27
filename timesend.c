@@ -5,6 +5,9 @@
  *
  * Then writes all of that to the given host and port and waits to recieve
  * it all back.
+ *
+ * TODO: Experiment with using iovecs and writev(2) instead of epoll(7) and
+ * write(2).
  */
 
 #define _XOPEN_SOURCE 600
@@ -16,13 +19,13 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdbool.h>
-#include <sys/types.h>
 #include <sys/socket.h>
-#include <netdb.h>
 #include <event.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <getopt.h>
+
+#include "sendlib.h"
 
 #define BUFFER_SIZE 1024
 
@@ -31,18 +34,6 @@ struct timespec read_start, start, write_start, end, write_end, getaddr_start, g
 struct event* remote_event;
 ssize_t total_read_bytes;
 bool read_started = false, write_started = false;
-
-static void timespec_subtract(struct timespec* restrict res, struct timespec* lhs, struct timespec* rhs)
-{
-    res->tv_sec = lhs->tv_sec - rhs->tv_sec;
-    if (rhs->tv_nsec > lhs->tv_nsec) {
-        res->tv_sec-=1;
-        res->tv_nsec = rhs->tv_nsec - lhs->tv_nsec;
-    }
-    else {
-        res->tv_nsec = lhs->tv_nsec - rhs->tv_nsec;
-    }
-}
 
 void print_help(void)
 {
@@ -54,52 +45,6 @@ void print_help(void)
             "\n"
             "CSV Format:\n"
             "total time,lookup time,connect time,writing time,reading time,sent bytes,received bytes\n");
-}
-
-int do_connect(const char* restrict host, const char* restrict svc)
-{
-    struct addrinfo hints;
-    struct addrinfo* result;
-    struct addrinfo* rp;
-    int sfd, err;
-    long current;
-
-    memset(&hints, 0, sizeof(struct addrinfo));
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_NUMERICSERV;
-
-    clock_gettime(CLOCK_MONOTONIC, &getaddr_start);
-    if ((err = getaddrinfo(host, svc, &hints, &result)) != 0) {
-        fprintf(stderr, "getaddr error %s", gai_strerror(err));
-        return -1;
-    }
-    clock_gettime(CLOCK_MONOTONIC, &getaddr_end);
-    for (rp = result; rp != NULL; rp = rp->ai_next) {
-        clock_gettime(CLOCK_MONOTONIC, &connect_start);
-        if ((sfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol)) < 0) {
-            return -1;
-        }
-        if (connect(sfd, rp->ai_addr, rp->ai_addrlen) != -1) {
-            clock_gettime(CLOCK_MONOTONIC, &connect_end);
-            break;
-        }
-        close(sfd);
-    }
-    if (rp == NULL) {
-        fprintf(stderr, "No address succeeded\n");
-        return -1;
-    }
-    freeaddrinfo(result);
-    if ((current = fcntl(sfd, F_GETFL)) < 0) {
-        close(sfd);
-        return -1;
-    }
-    if (fcntl(sfd, F_SETFL, current|O_NONBLOCK) < 0) {
-        close(sfd);
-        return -1;
-    }
-    return sfd;
 }
 
 struct data_status {
@@ -241,7 +186,7 @@ int main(int argc, char** argv) {
 
     base = event_init();
     clock_gettime(CLOCK_MONOTONIC, &start);
-    if ((sock = do_connect(address, service)) < 0) {
+    if ((sock = do_connect(address, service, &getaddr_start, &getaddr_end, &connect_start, &connect_end, true)) < 0) {
         perror("connect");
         return 1;
     }
